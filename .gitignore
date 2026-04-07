@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+v/
+
+# Environment
+.env
+.venv
+.secrets/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Uploads
+uploads/
+*.xlsx
+*.xls
+*.csv
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
