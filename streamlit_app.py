@@ -5,7 +5,7 @@ from io import BytesIO
 
 # 页面配置
 st.set_page_config(
-    page_title="供应链系统使用度分析平台",
+    page_title="供应链系统热度监测分析",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -33,7 +33,7 @@ USERS = {
 
 
 def login_page():
-    st.title("📊 供应链系统使用度分析平台")
+    st.title("📊 供应链系统热度监测分析")
     st.markdown("---")
 
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -57,7 +57,7 @@ def login_page():
 
 
 def dashboard_page():
-    st.title("📊 供应链系统使用度分析平台")
+    st.title("📊 供应链系统热度监测分析")
     st.markdown(f"### 欢迎回来，{st.session_state.name}！")
     st.markdown("以下是各系统使用情况的分析数据")
     st.markdown("---")
@@ -281,7 +281,7 @@ def main():
         login_page()
     else:
         with st.sidebar:
-            st.markdown("# 📊 供应链分析平台")
+            st.markdown("# 📊 供应链系统热度监测分析")
             st.markdown("---")
             page = st.radio(
                 "导航菜单",
