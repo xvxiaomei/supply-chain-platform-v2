@@ -259,10 +259,10 @@ def login_page():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("### 用户登录")
-        username = st.text_input("用户名")
-        password = st.text_input("密码", type="password")
+        username = st.text_input("用户名", key="login_username")
+        password = st.text_input("密码", type="password", key="login_password")
 
-        if st.button("登录", use_container_width=True):
+        if st.button("登录", use_container_width=True, key="login_button"):
             if username in USERS and USERS[username]['password'] == password:
                 st.session_state.logged_in = True
                 st.session_state.username = username
@@ -274,6 +274,7 @@ def login_page():
 
         st.markdown("---")
         st.caption("演示账号：admin / admin123  |  viewer / viewer123")
+
 
 def dashboard_page():
     st.title("📊 供应链系统使用度分析平台")
@@ -328,14 +329,14 @@ def dashboard_page():
                      title="系统点击量对比", text='total_clicks')
         fig.update_traces(texttemplate='%{text:,}', textposition='outside')
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="bar_chart")
 
     with col2:
         st.subheader("📈 使用度评分")
         fig = px.bar(df, x='system_name', y='usage_score', color='usage_level',
                      title="系统使用度评分", range_y=[0, 100])
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="score_chart")
 
     # 数据表格
     st.markdown("---")
@@ -355,13 +356,17 @@ def dashboard_page():
         'usage_level_text': '使用度等级'
     })
 
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, use_container_width=True, hide_index=True, key="system_table")
 
     # 菜单详情
     st.markdown("---")
     st.subheader("📋 菜单使用详情分析")
 
     systems_list = get_systems()
+    if not systems_list:
+        st.warning("未找到系统列表，请检查数据库连接")
+        return
+
     system_options = {s['system_code']: f"{s['system_code']} - {s['system_name']}" for s in systems_list}
     selected_system = st.selectbox("选择系统", list(system_options.keys()), format_func=lambda x: system_options[x],
                                    key="system_select")
@@ -388,13 +393,13 @@ def dashboard_page():
                 st.markdown("#### 点击量漏斗图")
                 fig = px.funnel(click_df, x='click_count', y='menu_name', title="菜单点击量分布")
                 fig.update_layout(height=450)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="click_funnel")
 
             with col2:
                 st.markdown("#### 浏览量漏斗图")
                 fig = px.funnel(click_df, x='page_view', y='menu_name', title="菜单浏览量分布")
                 fig.update_layout(height=450)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="view_funnel")
 
             st.markdown("#### 菜单详细数据")
             menu_df = click_df.rename(columns={
@@ -403,7 +408,7 @@ def dashboard_page():
                 'page_view': '浏览量',
                 'ratio': 'C/P值'
             })
-            st.dataframe(menu_df, use_container_width=True, hide_index=True)
+            st.dataframe(menu_df, use_container_width=True, hide_index=True, key="menu_table")
         else:
             st.info(f"暂无 {system_options[selected_system]} 的菜单数据")
 
@@ -427,13 +432,13 @@ def import_page():
     col1, col2 = st.columns(2)
 
     with col1:
-        quarter = st.text_input("季度标识", placeholder="例: 2025Q1")
+        quarter = st.text_input("季度标识", placeholder="例: 2025Q1", key="import_quarter")
 
     with col2:
-        uploaded_file = st.file_uploader("选择文件", type=['xlsx', 'xls', 'csv'])
+        uploaded_file = st.file_uploader("选择文件", type=['xlsx', 'xls', 'csv'], key="import_file")
 
     if uploaded_file and quarter:
-        if st.button("开始导入", type="primary"):
+        if st.button("开始导入", type="primary", key="import_button"):
             try:
                 if uploaded_file.name.endswith('.csv'):
                     df = pd.read_csv(uploaded_file)
@@ -473,7 +478,8 @@ def import_page():
         label="下载模板文件",
         data=output.getvalue(),
         file_name="数据导入模板.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="download_template"
     )
 
 
@@ -492,7 +498,7 @@ def account_page():
         {"用户名": "admin", "角色": "管理员", "状态": "激活"},
         {"用户名": "viewer", "角色": "查看者", "状态": "激活"}
     ])
-    st.dataframe(users_df, use_container_width=True, hide_index=True)
+    st.dataframe(users_df, use_container_width=True, hide_index=True, key="user_table")
 
 
 # ============ 自动登录函数 ============
@@ -519,13 +525,14 @@ def main():
             page = st.radio(
                 "导航菜单",
                 ["📈 仪表板", "📤 数据导入", "👥 账号管理"],
-                index=0
+                index=0,
+                key="nav_menu"
             )
             st.markdown("---")
             st.caption(f"当前用户: {st.session_state.username} ({st.session_state.role})")
 
             # 添加切换账号按钮
-            if st.button("🔄 切换账号"):
+            if st.button("🔄 切换账号", key="sidebar_switch_account"):
                 st.session_state.logged_in = False
                 st.rerun()
 
