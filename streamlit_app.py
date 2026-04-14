@@ -14,7 +14,7 @@ st.set_page_config(
     page_title="供应链系统使用度分析平台",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Supabase 配置
