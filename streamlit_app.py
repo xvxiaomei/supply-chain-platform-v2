@@ -2,20 +2,30 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from io import BytesIO
+import requests
+import os
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
 
 # 页面配置
 st.set_page_config(
-    page_title="供应链系统热度监测分析",
+    page_title="供应链系统使用度分析平台",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 导入 Supabase 工具
-from utils.supabase_client import (
-    get_systems, get_system_usage_summary, get_menu_details,
-    get_quarters, import_data_to_supabase
-)
+# Supabase 配置
+SUPABASE_URL = os.getenv('SUPABASE_URL', 'https://pluynxzhrtndpxdfkoak.supabase.co')
+SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_KEY', '')
+
+SUPABASE_HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
 
 # 初始化 session state
 if 'logged_in' not in st.session_state:
@@ -32,8 +42,218 @@ USERS = {
 }
 
 
+# ============ 数据库操作函数 ============
+def get_systems():
+    """获取系统列表"""
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/systems?select=*&order=sort_order.asc",
+            headers=SUPABASE_HEADERS,
+            timeout=10
+        )
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except Exception as e:
+        st.error(f"获取系统列表失败: {e}")
+        return []
+
+
+def get_system_usage_summary(quarter=None):
+    """获取系统使用汇总"""
+    try:
+        systems = get_systems()
+        if not systems:
+            return []
+
+        if quarter:
+            url = f"{SUPABASE_URL}/rest/v1/quarterly_usage?select=system_code,click_count,page_view,menu_name&quarter=eq.{quarter}"
+        else:
+            url = f"{SUPABASE_URL}/rest/v1/quarterly_usage?select=system_code,click_count,page_view,menu_name"
+
+        response = requests.get(url, headers=SUPABASE_HEADERS, timeout=10)
+
+        if response.status_code != 200:
+            return []
+
+        usage_data = response.json()
+
+        usage_dict = {}
+        menu_count_dict = {}
+        for item in usage_data:
+            code = item['system_code']
+            if code not in usage_dict:
+                usage_dict[code] = {'clicks': 0, 'views': 0}
+                menu_count_dict[code] = set()
+            usage_dict[code]['clicks'] += item['click_count']
+            usage_dict[code]['views'] += item['page_view']
+            menu_count_dict[code].add(item['menu_name'])
+
+        result = []
+        for system in systems:
+            code = system['system_code']
+            clicks = usage_dict.get(code, {}).get('clicks', 0)
+            views = usage_dict.get(code, {}).get('views', 0)
+            cp_ratio = round(clicks / views, 2) if views > 0 else 0
+            menu_count = len(menu_count_dict.get(code, set()))
+            usage_score = calculate_usage_score(clicks, views)
+
+            result.append({
+                'system_code': code,
+                'system_name': system['system_name'],
+                'category': system['category'],
+                'total_clicks': clicks,
+                'total_views': views,
+                'click_view_ratio': cp_ratio,
+                'menu_count': menu_count,
+                'usage_score': usage_score['score'],
+                'usage_level': usage_score['level'],
+                'usage_level_text': usage_score['level_text']
+            })
+
+        return result
+
+    except Exception as e:
+        st.error(f"获取数据失败: {e}")
+        return []
+
+
+def get_menu_details(system_code, quarter=None):
+    """获取菜单详情"""
+    try:
+        params = [f"system_code=eq.{system_code}"]
+        if quarter:
+            params.append(f"quarter=eq.{quarter}")
+
+        query = "&".join(params)
+        url = f"{SUPABASE_URL}/rest/v1/quarterly_usage?select=menu_name,click_count,page_view&{query}&order=click_count.desc"
+
+        response = requests.get(url, headers=SUPABASE_HEADERS, timeout=10)
+
+        if response.status_code != 200:
+            return []
+
+        menu_data = response.json()
+
+        for item in menu_data:
+            item['ratio'] = round(item['click_count'] / item['page_view'], 2) if item['page_view'] > 0 else 0
+
+        return menu_data
+
+    except Exception as e:
+        st.error(f"获取菜单详情失败: {e}")
+        return []
+
+
+def get_quarters():
+    """获取季度列表"""
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/quarterly_usage?select=quarter",
+            headers=SUPABASE_HEADERS,
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            quarters = list(set([item['quarter'] for item in response.json()]))
+            quarters.sort()
+            return quarters
+        return []
+    except Exception as e:
+        return []
+
+
+def calculate_usage_score(click_count, page_view):
+    """计算使用度评分（简化版）"""
+    cp_ratio = click_count / page_view if page_view > 0 else 0
+
+    if cp_ratio >= 3:
+        efficiency = 40
+    elif cp_ratio >= 2:
+        efficiency = 35
+    elif cp_ratio >= 1.5:
+        efficiency = 30
+    elif cp_ratio >= 1:
+        efficiency = 25
+    elif cp_ratio >= 0.5:
+        efficiency = 20
+    else:
+        efficiency = 10
+
+    if click_count >= 50000:
+        frequency = 30
+    elif click_count >= 30000:
+        frequency = 25
+    elif click_count >= 15000:
+        frequency = 20
+    elif click_count >= 5000:
+        frequency = 15
+    elif click_count >= 1000:
+        frequency = 10
+    else:
+        frequency = 5
+
+    total = efficiency + frequency + 20 + 10  # 简版评分
+
+    if total >= 80:
+        level = "high"
+        level_text = "高使用度"
+    elif total >= 60:
+        level = "medium"
+        level_text = "中等使用度"
+    elif total >= 40:
+        level = "low"
+        level_text = "低使用度"
+    else:
+        level = "very_low"
+        level_text = "极低使用度"
+
+    return {'score': total, 'level': level, 'level_text': level_text}
+
+
+def import_data_to_supabase(df, quarter):
+    """导入数据到 Supabase"""
+    try:
+        # 先删除该季度的数据
+        requests.delete(
+            f"{SUPABASE_URL}/rest/v1/quarterly_usage",
+            headers=SUPABASE_HEADERS,
+            params={'quarter': f"eq.{quarter}"}
+        )
+
+        records = []
+        for _, row in df.iterrows():
+            records.append({
+                'system_code': str(row['system_code']).strip(),
+                'quarter': quarter,
+                'menu_name': str(row['menu_name']).strip(),
+                'click_count': int(row['click_count']),
+                'page_view': int(row['page_view'])
+            })
+
+        batch_size = 500
+        success_count = 0
+
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i + batch_size]
+            response = requests.post(
+                f"{SUPABASE_URL}/rest/v1/quarterly_usage",
+                headers=SUPABASE_HEADERS,
+                json=batch
+            )
+            if response.status_code in [200, 201]:
+                success_count += len(batch)
+
+        return success_count, len(records) - success_count
+
+    except Exception as e:
+        st.error(f"导入失败: {e}")
+        return 0, 0
+
+
+# ============ 页面函数 ============
 def login_page():
-    st.title("📊 供应链系统热度监测分析")
+    st.title("📊 供应链系统使用度分析平台")
     st.markdown("---")
 
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -57,7 +277,7 @@ def login_page():
 
 
 def dashboard_page():
-    st.title("📊 供应链系统热度监测分析")
+    st.title("📊 供应链系统使用度分析平台")
     st.markdown(f"### 欢迎回来，{st.session_state.name}！")
     st.markdown("以下是各系统使用情况的分析数据")
     st.markdown("---")
@@ -69,9 +289,8 @@ def dashboard_page():
         selected_quarter = st.selectbox("选择季度", quarter_options)
 
         st.markdown("---")
-        st.markdown(f"**当前用户：** {st.session_state.username}")
-        st.markdown(f"**角色：** {st.session_state.role}")
-        if st.button("退出登录"):
+        st.markdown(f"**当前用户：** {st.session_state.username} ({st.session_state.role})")
+        if st.button("🔄 切换账号"):
             st.session_state.logged_in = False
             st.rerun()
 
@@ -276,12 +495,26 @@ def account_page():
     st.dataframe(users_df, use_container_width=True, hide_index=True)
 
 
+# ============ 自动登录函数 ============
+def auto_login_viewer():
+    """自动以 viewer 身份登录"""
+    if not st.session_state.logged_in:
+        st.session_state.logged_in = True
+        st.session_state.username = 'viewer'
+        st.session_state.role = 'viewer'
+        st.session_state.name = '查看者'
+
+
+# ============ 主函数 ============
 def main():
+    # 自动以 viewer 登录（首次访问时）
+    auto_login_viewer()
+
     if not st.session_state.logged_in:
         login_page()
     else:
         with st.sidebar:
-            st.markdown("# 📊 供应链系统热度监测分析")
+            st.markdown("# 📊 供应链分析平台")
             st.markdown("---")
             page = st.radio(
                 "导航菜单",
@@ -289,8 +522,12 @@ def main():
                 index=0
             )
             st.markdown("---")
-            st.caption(f"当前用户: {st.session_state.username}")
-            st.caption(f"角色: {st.session_state.role}")
+            st.caption(f"当前用户: {st.session_state.username} ({st.session_state.role})")
+
+            # 添加切换账号按钮
+            if st.button("🔄 切换账号"):
+                st.session_state.logged_in = False
+                st.rerun()
 
         if page == "📈 仪表板":
             dashboard_page()
