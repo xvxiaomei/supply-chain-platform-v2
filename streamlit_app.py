@@ -275,7 +275,6 @@ def login_page():
         st.markdown("---")
         st.caption("演示账号：admin / admin123  |  viewer / viewer123")
 
-
 def dashboard_page():
     st.title("📊 供应链系统使用度分析平台")
     st.markdown(f"### 欢迎回来，{st.session_state.name}！")
@@ -286,11 +285,11 @@ def dashboard_page():
         st.markdown("## 🔍 数据筛选")
         quarters = get_quarters()
         quarter_options = ["全部季度"] + quarters
-        selected_quarter = st.selectbox("选择季度", quarter_options)
+        selected_quarter = st.selectbox("选择季度", quarter_options, key="quarter_select")
 
         st.markdown("---")
         st.markdown(f"**当前用户：** {st.session_state.username} ({st.session_state.role})")
-        if st.button("🔄 切换账号"):
+        if st.button("🔄 切换账号", key="switch_account_btn"):
             st.session_state.logged_in = False
             st.rerun()
 
@@ -364,7 +363,8 @@ def dashboard_page():
 
     systems_list = get_systems()
     system_options = {s['system_code']: f"{s['system_code']} - {s['system_name']}" for s in systems_list}
-    selected_system = st.selectbox("选择系统", list(system_options.keys()), format_func=lambda x: system_options[x])
+    selected_system = st.selectbox("选择系统", list(system_options.keys()), format_func=lambda x: system_options[x],
+                                   key="system_select")
 
     if selected_system:
         menu_data = get_menu_details(selected_system, quarter)
@@ -372,8 +372,8 @@ def dashboard_page():
         if menu_data:
             col1, col2 = st.columns([1, 3])
             with col1:
-                rank_type = st.radio("排名类型", ["前N名", "后N名"], horizontal=True)
-                rank_count = st.slider("显示数量", 5, 30, 10)
+                rank_type = st.radio("排名类型", ["前N名", "后N名"], horizontal=True, key="rank_type")
+                rank_count = st.slider("显示数量", 5, 30, 10, key="rank_count")
 
             sorted_data = sorted(menu_data, key=lambda x: x['click_count'], reverse=True)
             if rank_type == "前N名":
