@@ -215,7 +215,6 @@ def import_data_to_supabase(df, quarter):
     """导入数据到 Supabase（完整修复版）"""
     try:
         # ========== 数据清理 ==========
-        # 删除空行
         df = df.dropna(subset=['system_code', 'menu_name'])
 
         if len(df) == 0:
@@ -238,25 +237,24 @@ def import_data_to_supabase(df, quarter):
         st.write(f"### 📌 涉及系统: {', '.join(system_codes)}")
 
         # ========== 删除该季度这些系统的旧数据 ==========
-        deleted_count = 0
         for code in system_codes:
             try:
+                # ✅ 正确：将过滤条件拼接到 URL 中
+                delete_url = f"{SUPABASE_URL}/rest/v1/quarterly_usage?quarter=eq.{quarter}&system_code=eq.{code}"
                 delete_response = requests.delete(
-                    f"{SUPABASE_URL}/rest/v1/quarterly_usage",
+                    delete_url,
                     headers=SUPABASE_HEADERS,
-                    params={
-                        'quarter': f"eq.{quarter}",
-                        'system_code': f"eq.{code}"
-                    },
                     timeout=10
                 )
                 if delete_response.status_code in [200, 204]:
-                    deleted_count += 1
-                    st.info(f"已删除 {code} 在 {quarter} 的旧数据")
+                    st.info(f"✅ 已删除 {code} 在 {quarter} 的旧数据")
+                elif delete_response.status_code == 404:
+                    st.info(f"ℹ️ {code} 在 {quarter} 无旧数据")
                 else:
-                    st.warning(f"删除 {code} 旧数据返回: {delete_response.status_code}")
+                    st.warning(
+                        f"⚠️ 删除 {code} 旧数据返回: {delete_response.status_code} - {delete_response.text[:100]}")
             except Exception as e:
-                st.warning(f"删除 {code} 旧数据时出错: {e}")
+                st.warning(f"⚠️ 删除 {code} 旧数据时出错: {e}")
 
         # ========== 准备新数据 ==========
         records = []
@@ -302,7 +300,7 @@ def import_data_to_supabase(df, quarter):
                     error_msg = f"批次 {batch_num}: HTTP {response.status_code}"
                     try:
                         error_detail = response.json()
-                        error_msg += f" - {error_detail}"
+                        error_msg += f" - {error_detail.get('message', error_detail)}"
                     except:
                         error_msg += f" - {response.text[:200]}"
                     error_messages.append(error_msg)
@@ -327,6 +325,8 @@ def import_data_to_supabase(df, quarter):
 
         if success_count > 0:
             st.success(f"### ✅ 导入完成！成功: {success_count} 条, 失败: {fail_count} 条")
+            if fail_count == 0:
+                st.balloons()
         else:
             st.error("### ❌ 所有数据导入失败，请检查上方错误信息")
 
