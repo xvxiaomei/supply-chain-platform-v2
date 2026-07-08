@@ -288,7 +288,10 @@ def import_data_to_supabase(df, quarter):
             try:
                 response = requests.post(
                     f"{SUPABASE_URL}/rest/v1/quarterly_usage",
-                    headers=SUPABASE_HEADERS,
+                    headers={
+                        **SUPABASE_HEADERS,
+                        'Prefer': 'resolution=merge-duplicates'  # ← 这一行
+                    },
                     json=batch,
                     timeout=30
                 )
