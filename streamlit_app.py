@@ -193,7 +193,7 @@ def calculate_usage_score(click_count, page_view):
     else:
         frequency = 5
 
-    total = efficiency + frequency + 20 + 10  # 简版评分
+    total = efficiency + frequency + 20 + 10
 
     if total >= 80:
         level = "high"
@@ -212,7 +212,7 @@ def calculate_usage_score(click_count, page_view):
 
 
 def import_data_to_supabase(df, quarter):
-    """导入数据到 Supabase（完整修复版）"""
+    """导入数据到 Supabase"""
     try:
         # ========== 数据清理 ==========
         df = df.dropna(subset=['system_code', 'menu_name'])
@@ -227,10 +227,13 @@ def import_data_to_supabase(df, quarter):
         df['click_count'] = pd.to_numeric(df['click_count']).astype(int)
         df['page_view'] = pd.to_numeric(df['page_view']).astype(int)
 
-        # ========== 显示数据预览 ==========
+        # 去重
+        df = df.sort_values('click_count', ascending=False)
+        df = df.drop_duplicates(subset=['system_code', 'menu_name'], keep='first')
+
         st.write("### 📋 数据预览（清理后）")
         st.dataframe(df.head(10))
-        st.write(f"共 {len(df)} 行数据")
+        st.write(f"共 {len(df)} 行数据（已去重）")
 
         # ========== 获取所有系统代码 ==========
         system_codes = df['system_code'].unique().tolist()
@@ -239,7 +242,6 @@ def import_data_to_supabase(df, quarter):
         # ========== 删除该季度这些系统的旧数据 ==========
         for code in system_codes:
             try:
-                # ✅ 正确：将过滤条件拼接到 URL 中
                 delete_url = f"{SUPABASE_URL}/rest/v1/quarterly_usage?quarter=eq.{quarter}&system_code=eq.{code}"
                 delete_response = requests.delete(
                     delete_url,
@@ -251,8 +253,7 @@ def import_data_to_supabase(df, quarter):
                 elif delete_response.status_code == 404:
                     st.info(f"ℹ️ {code} 在 {quarter} 无旧数据")
                 else:
-                    st.warning(
-                        f"⚠️ 删除 {code} 旧数据返回: {delete_response.status_code} - {delete_response.text[:100]}")
+                    st.warning(f"⚠️ 删除 {code} 旧数据返回: {delete_response.status_code}")
             except Exception as e:
                 st.warning(f"⚠️ 删除 {code} 旧数据时出错: {e}")
 
@@ -271,7 +272,7 @@ def import_data_to_supabase(df, quarter):
             st.warning("没有有效数据可导入")
             return 0, 0
 
-        # ========== 批量插入 ==========
+        # ========== 批量导入 ==========
         batch_size = 500
         success_count = 0
         error_messages = []
@@ -288,10 +289,7 @@ def import_data_to_supabase(df, quarter):
             try:
                 response = requests.post(
                     f"{SUPABASE_URL}/rest/v1/quarterly_usage",
-                    headers={
-                        **SUPABASE_HEADERS,
-                        'Prefer': 'resolution=merge-duplicates'  # ← 这一行
-                    },
+                    headers=SUPABASE_HEADERS,
                     json=batch,
                     timeout=30
                 )
@@ -313,12 +311,10 @@ def import_data_to_supabase(df, quarter):
                 error_messages.append(f"批次 {batch_num}: {str(e)}")
                 st.error(f"❌ 批次 {batch_num} 异常: {e}")
 
-            # 更新进度
             progress_bar.progress(min(batch_num / total_batches, 1.0))
 
         progress_bar.empty()
 
-        # ========== 显示结果 ==========
         if error_messages:
             st.warning("### ⚠️ 部分导入失败")
             for msg in error_messages:
@@ -382,7 +378,8 @@ def dashboard_page():
         st.markdown("---")
         st.markdown(f"**当前用户：** {st.session_state.username} ({st.session_state.role})")
         if st.button("🔄 切换账号", key="switch_account_btn"):
-            st.session_state.logged_in = False
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
             st.rerun()
 
     quarter = None if selected_quarter == "全部季度" else selected_quarter
@@ -449,7 +446,7 @@ def dashboard_page():
 
     st.dataframe(display_df, use_container_width=True, hide_index=True, key="system_table")
 
-    # 菜单详情
+    # ========== 菜单详情 ==========
     st.markdown("---")
     st.subheader("📋 菜单使用详情分析")
 
@@ -503,6 +500,138 @@ def dashboard_page():
         else:
             st.info(f"暂无 {system_options[selected_system]} 的菜单数据")
 
+    # ========== 下载数据明细 ==========
+    st.markdown("---")
+    st.subheader("📥 下载数据明细")
+
+    col1, col2, col3 = st.columns([2, 2, 1])
+
+    with col1:
+        system_options_download = {s['system_code']: f"{s['system_code']} - {s['system_name']}" for s in systems_list}
+        system_options_download['ALL'] = "全部系统"
+        selected_system_download = st.selectbox(
+            "选择系统",
+            list(system_options_download.keys()),
+            format_func=lambda x: system_options_download[x],
+            key="download_system"
+        )
+
+    with col2:
+        quarter_options_download = ["全部季度"] + quarters
+        selected_quarter_download = st.selectbox(
+            "选择季度",
+            quarter_options_download,
+            key="download_quarter"
+        )
+
+    with col3:
+        st.write("")
+        st.write("")
+        download_btn = st.button(
+            "📥 下载数据",
+            type="primary",
+            key="download_btn",
+            use_container_width=True
+        )
+
+    if download_btn:
+        with st.spinner("正在生成下载文件..."):
+            params = []
+
+            if selected_system_download != "ALL":
+                params.append(f"system_code=eq.{selected_system_download}")
+
+            if selected_quarter_download != "全部季度":
+                params.append(f"quarter=eq.{selected_quarter_download}")
+
+            query = "&".join(params) if params else ""
+            url = f"{SUPABASE_URL}/rest/v1/quarterly_usage?select=system_code,quarter,menu_name,click_count,page_view"
+            if query:
+                url += f"&{query}"
+
+            try:
+                response = requests.get(
+                    url,
+                    headers=SUPABASE_HEADERS,
+                    timeout=30
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+
+                    if data:
+                        df_download = pd.DataFrame(data)
+
+                        system_name_map = {s['system_code']: s['system_name'] for s in systems_list}
+                        df_download['system_name'] = df_download['system_code'].map(system_name_map)
+
+                        df_download['cp_ratio'] = df_download.apply(
+                            lambda row: round(row['click_count'] / row['page_view'], 2) if row['page_view'] > 0 else 0,
+                            axis=1
+                        )
+
+                        df_download = df_download[[
+                            'system_code', 'system_name', 'quarter', 'menu_name',
+                            'click_count', 'page_view', 'cp_ratio'
+                        ]].rename(columns={
+                            'system_code': '系统代码',
+                            'system_name': '系统名称',
+                            'quarter': '季度',
+                            'menu_name': '菜单名称',
+                            'click_count': '点击量',
+                            'page_view': '浏览量',
+                            'cp_ratio': 'C/P值'
+                        })
+
+                        df_download = df_download.sort_values(['系统代码', '点击量'], ascending=[True, False])
+
+                        st.success(f"✅ 共 {len(df_download)} 条数据")
+                        st.dataframe(df_download.head(20), use_container_width=True)
+
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            df_download.to_excel(writer, sheet_name='使用明细', index=False)
+
+                            summary = df_download.groupby(['系统代码', '系统名称']).agg({
+                                '点击量': 'sum',
+                                '浏览量': 'sum',
+                                '菜单名称': 'count'
+                            }).reset_index()
+                            summary['C/P值'] = summary.apply(
+                                lambda row: round(row['点击量'] / row['浏览量'], 2) if row['浏览量'] > 0 else 0,
+                                axis=1
+                            )
+                            summary = summary.rename(columns={
+                                '系统代码': '系统代码',
+                                '系统名称': '系统名称',
+                                '点击量': '总点击量',
+                                '浏览量': '总浏览量',
+                                '菜单名称': '菜单数量',
+                                'C/P值': 'C/P值'
+                            })
+                            summary.to_excel(writer, sheet_name='系统汇总', index=False)
+
+                        system_label = selected_system_download if selected_system_download != "ALL" else "全部系统"
+                        quarter_label = selected_quarter_download if selected_quarter_download != "全部季度" else "全部季度"
+
+                        st.download_button(
+                            label="📥 下载 Excel 文件",
+                            data=output.getvalue(),
+                            file_name=f"使用明细_{system_label}_{quarter_label}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="download_excel",
+                            use_container_width=True
+                        )
+                    else:
+                        st.warning("⚠️ 没有找到符合条件的数据")
+                else:
+                    st.error(f"❌ 获取数据失败: {response.status_code}")
+
+            except Exception as e:
+                st.error(f"❌ 下载失败: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+
 
 def import_page():
     st.title("📤 数据导入")
@@ -531,19 +660,16 @@ def import_page():
     if uploaded_file and quarter:
         if st.button("开始导入", type="primary", key="import_button"):
             try:
-                # 读取文件
                 if uploaded_file.name.endswith('.csv'):
                     df = pd.read_csv(uploaded_file)
                 else:
                     df = pd.read_excel(uploaded_file)
 
-                # ========== 调试信息 ==========
                 st.write("### 📋 文件读取成功")
                 st.write(f"行数: {len(df)}")
                 st.write(f"列名: {df.columns.tolist()}")
                 st.write("### 原始数据预览:")
                 st.dataframe(df.head())
-                # ==================================
 
                 required_cols = ['system_code', 'menu_name', 'click_count', 'page_view']
                 missing_cols = [col for col in required_cols if col not in df.columns]
@@ -555,15 +681,12 @@ def import_page():
                     st.write("### 请确保列名完全匹配（区分大小写）:")
                     st.code("system_code | menu_name | click_count | page_view")
                 else:
-                    # ========== 数据验证 ==========
                     st.write("### 数据验证:")
 
-                    # 检查空值
                     null_counts = df[required_cols].isnull().sum()
                     if null_counts.sum() > 0:
                         st.warning(f"⚠️ 存在空值:\n{null_counts}")
 
-                    # 检查数字列
                     try:
                         df['click_count'] = pd.to_numeric(df['click_count'])
                         df['page_view'] = pd.to_numeric(df['page_view'])
@@ -572,13 +695,11 @@ def import_page():
                         st.error(f"❌ 数字列转换失败: {e}")
                         st.stop()
 
-                    # 检查 system_code
                     valid_codes = ['WMS', 'IMS', 'SCM', 'SRM', 'TMS', 'QMS']
                     invalid_codes = df[~df['system_code'].isin(valid_codes)]['system_code'].unique()
                     if len(invalid_codes) > 0:
                         st.warning(f"⚠️ 发现无效的 system_code: {invalid_codes.tolist()}")
                         st.write(f"有效值: {valid_codes}")
-                    # ==================================
 
                     with st.spinner("正在导入数据..."):
                         success, fail = import_data_to_supabase(df, quarter)
