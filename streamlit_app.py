@@ -502,13 +502,13 @@ def account_page():
 
 
 # ============ 自动登录函数 ============
-# def auto_login_viewer():
-#     """自动以 viewer 身份登录"""
-#     if not st.session_state.logged_in:
-#         st.session_state.logged_in = True
-#         st.session_state.username = 'viewer'
-#         st.session_state.role = 'viewer'
-#         st.session_state.name = '查看者'
+def auto_login_viewer():
+    """自动以 viewer 身份登录"""
+    if not st.session_state.logged_in:
+        st.session_state.logged_in = True
+        st.session_state.username = 'viewer'
+        st.session_state.role = 'viewer'
+        st.session_state.name = '查看者'
 
 
 # ============ 主函数 ============
