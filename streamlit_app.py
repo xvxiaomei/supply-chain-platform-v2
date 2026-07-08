@@ -212,42 +212,130 @@ def calculate_usage_score(click_count, page_view):
 
 
 def import_data_to_supabase(df, quarter):
-    """导入数据到 Supabase"""
+    """导入数据到 Supabase（完整修复版）"""
     try:
-        # 先删除该季度的数据
-        requests.delete(
-            f"{SUPABASE_URL}/rest/v1/quarterly_usage",
-            headers=SUPABASE_HEADERS,
-            params={'quarter': f"eq.{quarter}"}
-        )
+        # ========== 数据清理 ==========
+        # 删除空行
+        df = df.dropna(subset=['system_code', 'menu_name'])
 
+        if len(df) == 0:
+            st.warning("数据为空，请检查文件内容")
+            return 0, 0
+
+        # 转换数据类型
+        df['system_code'] = df['system_code'].astype(str).str.strip()
+        df['menu_name'] = df['menu_name'].astype(str).str.strip()
+        df['click_count'] = pd.to_numeric(df['click_count']).astype(int)
+        df['page_view'] = pd.to_numeric(df['page_view']).astype(int)
+
+        # ========== 显示数据预览 ==========
+        st.write("### 📋 数据预览（清理后）")
+        st.dataframe(df.head(10))
+        st.write(f"共 {len(df)} 行数据")
+
+        # ========== 获取所有系统代码 ==========
+        system_codes = df['system_code'].unique().tolist()
+        st.write(f"### 📌 涉及系统: {', '.join(system_codes)}")
+
+        # ========== 删除该季度这些系统的旧数据 ==========
+        deleted_count = 0
+        for code in system_codes:
+            try:
+                delete_response = requests.delete(
+                    f"{SUPABASE_URL}/rest/v1/quarterly_usage",
+                    headers=SUPABASE_HEADERS,
+                    params={
+                        'quarter': f"eq.{quarter}",
+                        'system_code': f"eq.{code}"
+                    },
+                    timeout=10
+                )
+                if delete_response.status_code in [200, 204]:
+                    deleted_count += 1
+                    st.info(f"已删除 {code} 在 {quarter} 的旧数据")
+                else:
+                    st.warning(f"删除 {code} 旧数据返回: {delete_response.status_code}")
+            except Exception as e:
+                st.warning(f"删除 {code} 旧数据时出错: {e}")
+
+        # ========== 准备新数据 ==========
         records = []
         for _, row in df.iterrows():
             records.append({
-                'system_code': str(row['system_code']).strip(),
+                'system_code': str(row['system_code']),
                 'quarter': quarter,
-                'menu_name': str(row['menu_name']).strip(),
+                'menu_name': str(row['menu_name']),
                 'click_count': int(row['click_count']),
                 'page_view': int(row['page_view'])
             })
 
+        if not records:
+            st.warning("没有有效数据可导入")
+            return 0, 0
+
+        # ========== 批量插入 ==========
         batch_size = 500
         success_count = 0
+        error_messages = []
+
+        st.write("### ⏳ 正在导入数据...")
+        progress_bar = st.progress(0)
+
+        total_batches = (len(records) + batch_size - 1) // batch_size
 
         for i in range(0, len(records), batch_size):
             batch = records[i:i + batch_size]
-            response = requests.post(
-                f"{SUPABASE_URL}/rest/v1/quarterly_usage",
-                headers=SUPABASE_HEADERS,
-                json=batch
-            )
-            if response.status_code in [200, 201]:
-                success_count += len(batch)
+            batch_num = i // batch_size + 1
 
-        return success_count, len(records) - success_count
+            try:
+                response = requests.post(
+                    f"{SUPABASE_URL}/rest/v1/quarterly_usage",
+                    headers=SUPABASE_HEADERS,
+                    json=batch,
+                    timeout=30
+                )
+
+                if response.status_code in [200, 201]:
+                    success_count += len(batch)
+                    st.success(f"✅ 批次 {batch_num}/{total_batches} 导入成功 ({len(batch)} 条)")
+                else:
+                    error_msg = f"批次 {batch_num}: HTTP {response.status_code}"
+                    try:
+                        error_detail = response.json()
+                        error_msg += f" - {error_detail}"
+                    except:
+                        error_msg += f" - {response.text[:200]}"
+                    error_messages.append(error_msg)
+                    st.error(f"❌ {error_msg}")
+
+            except Exception as e:
+                error_messages.append(f"批次 {batch_num}: {str(e)}")
+                st.error(f"❌ 批次 {batch_num} 异常: {e}")
+
+            # 更新进度
+            progress_bar.progress(min(batch_num / total_batches, 1.0))
+
+        progress_bar.empty()
+
+        # ========== 显示结果 ==========
+        if error_messages:
+            st.warning("### ⚠️ 部分导入失败")
+            for msg in error_messages:
+                st.code(msg)
+
+        fail_count = len(records) - success_count
+
+        if success_count > 0:
+            st.success(f"### ✅ 导入完成！成功: {success_count} 条, 失败: {fail_count} 条")
+        else:
+            st.error("### ❌ 所有数据导入失败，请检查上方错误信息")
+
+        return success_count, fail_count
 
     except Exception as e:
-        st.error(f"导入失败: {e}")
+        st.error(f"### ❌ 导入失败: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         return 0, 0
 
 
@@ -440,24 +528,62 @@ def import_page():
     if uploaded_file and quarter:
         if st.button("开始导入", type="primary", key="import_button"):
             try:
+                # 读取文件
                 if uploaded_file.name.endswith('.csv'):
                     df = pd.read_csv(uploaded_file)
                 else:
                     df = pd.read_excel(uploaded_file)
 
+                # ========== 调试信息 ==========
+                st.write("### 📋 文件读取成功")
+                st.write(f"行数: {len(df)}")
+                st.write(f"列名: {df.columns.tolist()}")
+                st.write("### 原始数据预览:")
+                st.dataframe(df.head())
+                # ==================================
+
                 required_cols = ['system_code', 'menu_name', 'click_count', 'page_view']
                 missing_cols = [col for col in required_cols if col not in df.columns]
+
                 if missing_cols:
-                    st.error(f"缺少列: {missing_cols}")
+                    st.error(f"❌ 缺少列: {missing_cols}")
+                    st.write("### 当前列名:")
+                    st.write(df.columns.tolist())
+                    st.write("### 请确保列名完全匹配（区分大小写）:")
+                    st.code("system_code | menu_name | click_count | page_view")
                 else:
+                    # ========== 数据验证 ==========
+                    st.write("### 数据验证:")
+
+                    # 检查空值
+                    null_counts = df[required_cols].isnull().sum()
+                    if null_counts.sum() > 0:
+                        st.warning(f"⚠️ 存在空值:\n{null_counts}")
+
+                    # 检查数字列
+                    try:
+                        df['click_count'] = pd.to_numeric(df['click_count'])
+                        df['page_view'] = pd.to_numeric(df['page_view'])
+                        st.success("✅ 数字列转换成功")
+                    except Exception as e:
+                        st.error(f"❌ 数字列转换失败: {e}")
+                        st.stop()
+
+                    # 检查 system_code
+                    valid_codes = ['WMS', 'IMS', 'SCM', 'SRM', 'TMS', 'QMS']
+                    invalid_codes = df[~df['system_code'].isin(valid_codes)]['system_code'].unique()
+                    if len(invalid_codes) > 0:
+                        st.warning(f"⚠️ 发现无效的 system_code: {invalid_codes.tolist()}")
+                        st.write(f"有效值: {valid_codes}")
+                    # ==================================
+
                     with st.spinner("正在导入数据..."):
                         success, fail = import_data_to_supabase(df, quarter)
-                        if success > 0:
-                            st.success(f"✅ 导入完成！成功: {success}, 失败: {fail}")
-                        else:
-                            st.error("导入失败，请检查文件格式")
+
             except Exception as e:
-                st.error(f"导入失败: {e}")
+                st.error(f"❌ 导入失败: {e}")
+                import traceback
+                st.code(traceback.format_exc())
 
     st.markdown("---")
     st.markdown("### 📥 下载导入模板")
@@ -501,21 +627,8 @@ def account_page():
     st.dataframe(users_df, use_container_width=True, hide_index=True, key="user_table")
 
 
-# ============ 自动登录函数 ============
-def auto_login_viewer():
-    """自动以 viewer 身份登录"""
-    if not st.session_state.logged_in:
-        st.session_state.logged_in = True
-        st.session_state.username = 'viewer'
-        st.session_state.role = 'admin'
-        st.session_state.name = '查看者'
-
-
 # ============ 主函数 ============
 def main():
-    # 自动以 viewer 登录（首次访问时）
-    auto_login_viewer()
-
     if not st.session_state.logged_in:
         login_page()
     else:
@@ -531,9 +644,9 @@ def main():
             st.markdown("---")
             st.caption(f"当前用户: {st.session_state.username} ({st.session_state.role})")
 
-            # 添加切换账号按钮
             if st.button("🔄 切换账号", key="sidebar_switch_account"):
-                st.session_state.logged_in = False
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
                 st.rerun()
 
         if page == "📈 仪表板":
