@@ -507,7 +507,7 @@ def auto_login_viewer():
     if not st.session_state.logged_in:
         st.session_state.logged_in = True
         st.session_state.username = 'viewer'
-        st.session_state.role = 'viewer'
+        st.session_state.role = 'admin'
         st.session_state.name = '查看者'
 
 
